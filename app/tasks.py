@@ -55,15 +55,21 @@ def send_callback(callback_url, token, payload):
         headers={"Authorization": f"Token {token}"},
         timeout=CALLBACK_TIMEOUT,
     )
-    r.raise_for_status()
+    if 400 <= r.status_code < 500:
+        # Client errors won't fix themselves on retry - log what the API said and give up
+        log.error("Callback rejected for call_id=%s: %s %s",
+                  payload.get("call_id"), r.status_code, r.text[:1000])
+        return False
+    r.raise_for_status()  # 5xx -> RequestException -> retried
+    return True
 
 
 @celery_app.task(bind=True, autoretry_for=(requests.RequestException,),
                  retry_backoff=True, retry_backoff_max=600, max_retries=5)
 def deliver_callback(self, callback_url, token, payload):
     """Separate task so a failing callback is retried without re-transcribing."""
-    send_callback(callback_url, token, payload)
-    log.info("Callback delivered for call_id=%s", payload.get("call_id"))
+    if send_callback(callback_url, token, payload):
+        log.info("Callback delivered for call_id=%s", payload.get("call_id"))
 
 
 # ---------------------------------------------------------------- transcription
@@ -76,16 +82,16 @@ def transcribe_and_notify(self, audio_url, callback_url, token, call_id, options
         with tempfile.TemporaryDirectory() as tmp:
             audio_path = download_audio(audio_url, tmp)
             turns = transcribe_call(audio_path, model, device, **options)
-        payload = {
-            "call_id": call_id,
-            "status": "completed",
-            "transcript": {"chat":turns_to_records(turns)},
-        }
+        chat = turns_to_records(turns)
+        status = "completed"
     except Exception as exc:
         log.exception("Transcription failed for call_id=%s", call_id)
         if self.request.retries < self.max_retries:
             raise self.retry(exc=exc)
-        payload = {"call_id": call_id, "status": "failed", "error": str(exc)}
+        chat = []  # the callback API records an empty chat as "transcript not available"
+        status = "failed"
 
+    # The callback API rejects any keys other than call_id and transcript
+    payload = {"call_id": call_id, "transcript": {"chat": chat}}
     deliver_callback.delay(callback_url, token, payload)
-    return {"call_id": call_id, "status": payload["status"]}
+    return {"call_id": call_id, "status": status, "segments": len(chat)}
