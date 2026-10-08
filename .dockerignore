@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+venv/
+.venv/
+pretrained_models/
+*.mp3
+*.wav
+*.m4a
+*_transcript.*
