@@ -52,7 +52,7 @@ def send_callback(callback_url, token, payload):
     r = requests.post(
         callback_url,
         json=payload,
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Token {token}"},
         timeout=CALLBACK_TIMEOUT,
     )
     r.raise_for_status()
