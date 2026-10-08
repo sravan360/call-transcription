@@ -11,6 +11,13 @@ from transcribe_call import load_model, transcribe_call, turns_to_records
 
 log = logging.getLogger(__name__)
 
+try:  # Silero VAD (onnxruntime, CPU) warns about GPU discovery in containers - harmless
+    import onnxruntime
+
+    onnxruntime.set_default_logger_severity(3)
+except ImportError:
+    pass
+
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "medium.en")
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
 CALLBACK_TIMEOUT = int(os.getenv("CALLBACK_TIMEOUT", "30"))

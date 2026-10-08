@@ -5,6 +5,7 @@ redis==5.2.1
 requests==2.32.3
 numpy<2
 av==12.3.0
-faster-whisper==1.1.0
-speechbrain==1.0.2
+faster-whisper==1.2.1
+speechbrain==1.1.1
 scikit-learn==1.6.0
+huggingface_hub==1.33.0
