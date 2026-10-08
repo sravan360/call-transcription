@@ -79,7 +79,7 @@ def transcribe_and_notify(self, audio_url, callback_url, token, call_id, options
         payload = {
             "call_id": call_id,
             "status": "completed",
-            "transcript": turns_to_records(turns),
+            "transcript": {"chat":turns_to_records(turns)},
         }
     except Exception as exc:
         log.exception("Transcription failed for call_id=%s", call_id)
