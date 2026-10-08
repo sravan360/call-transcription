@@ -13,10 +13,13 @@ RUN apt-get update \
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+# Ubuntu 22.04 ships pip 22.0.2, whose resolver crashes (AssertionError in get_topological_weights)
+RUN python3 -m pip install --no-cache-dir --upgrade pip
+
+RUN python3 -m pip install --no-cache-dir torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
 COPY transcribe_call.py .
 COPY app ./app
