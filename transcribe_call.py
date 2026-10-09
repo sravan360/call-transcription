@@ -28,6 +28,7 @@ Usage:
     python transcribe_call.py call.mp3 --force-mono          # ignore stereo channels
     python transcribe_call.py call.mp3 --model large-v3 -o out.json
     python transcribe_call.py call.mp3 --format txt          # readable [mm:ss - mm:ss] lines
+    python transcribe_call.py call.mp3 --batch-size 16 --compute-type int8_float16  # faster on GPU
 
 Output (default JSON):
     [{"text": "...", "start": 0.45, "end": 1.21, "user_role_classified": "customer"}, ...]
@@ -45,7 +46,7 @@ from pathlib import Path
 
 import av
 import numpy as np
-from faster_whisper import WhisperModel
+from faster_whisper import BatchedInferencePipeline, WhisperModel
 
 TARGET_RATE = 16000  # Whisper and ECAPA both expect 16 kHz mono float32
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -271,12 +272,25 @@ def merge_turns(segments, gap=1.5):
     return turns
 
 
-def load_model(name="medium.en", device="auto"):
-    """Return (WhisperModel, resolved device)."""
+class BatchedModel:
+    """Runs VAD speech chunks through Whisper in parallel batches; same transcribe() call."""
+
+    def __init__(self, model, batch_size):
+        self.pipeline = BatchedInferencePipeline(model)
+        self.batch_size = batch_size
+
+    def transcribe(self, audio, **kwargs):
+        return self.pipeline.transcribe(audio, batch_size=self.batch_size, **kwargs)
+
+
+def load_model(name="medium.en", device="auto", compute_type=None, batch_size=0):
+    """Return (model, resolved device). batch_size > 0 enables batched inference."""
     device = pick_device(device)
-    compute_type = "float16" if device == "cuda" else "int8"
-    print(f"Loading Whisper model '{name}' on {device} (first run downloads it) ...")
-    return WhisperModel(name, device=device, compute_type=compute_type), device
+    compute_type = compute_type or ("float16" if device == "cuda" else "int8")
+    print(f"Loading Whisper model '{name}' on {device} ({compute_type}"
+          f"{f', batch {batch_size}' if batch_size > 0 else ''}) (first run downloads it) ...")
+    model = WhisperModel(name, device=device, compute_type=compute_type)
+    return (BatchedModel(model, batch_size) if batch_size > 0 else model), device
 
 
 def transcribe_call(audio_path, model, device, language="en", agent_channel="left",
@@ -336,6 +350,10 @@ def main():
     p.add_argument("--language", default="en")
     p.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto",
                    help="Run on GPU (cuda) or CPU (default: auto-detect)")
+    p.add_argument("--compute-type",
+                   help="e.g. float16, int8_float16, int8 (default: float16 on GPU, int8 on CPU)")
+    p.add_argument("--batch-size", type=int, default=0,
+                   help="Batched inference: transcribe this many speech chunks at once (default: 0 = off)")
     args = p.parse_args()
 
     audio_path = Path(args.audio)
@@ -344,7 +362,7 @@ def main():
         else audio_path.with_name(f"{audio_path.stem}_transcript.{args.format}")
     )
 
-    model, device = load_model(args.model, args.device)
+    model, device = load_model(args.model, args.device, args.compute_type, args.batch_size)
     turns = transcribe_call(
         audio_path, model, device, args.language, args.agent_channel,
         args.speakers, args.swap_speakers, args.force_mono,

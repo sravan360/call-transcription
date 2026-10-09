@@ -20,6 +20,8 @@ except ImportError:
 
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "medium.en")
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
+WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE") or None  # unset: float16 on GPU, int8 on CPU
+WHISPER_BATCH_SIZE = int(os.getenv("WHISPER_BATCH_SIZE", "0"))     # 0 = sequential (no batching)
 CALLBACK_TIMEOUT = int(os.getenv("CALLBACK_TIMEOUT", "30"))
 
 _model = None  # loaded once per worker process, reused across tasks
@@ -34,7 +36,7 @@ def get_model():
 
             if ctranslate2.get_cuda_device_count() == 0 or not torch.cuda.is_available():
                 raise RuntimeError("WHISPER_DEVICE=cuda but no GPU is visible to the worker")
-        _model = load_model(WHISPER_MODEL, WHISPER_DEVICE)
+        _model = load_model(WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE, WHISPER_BATCH_SIZE)
     return _model
 
 
