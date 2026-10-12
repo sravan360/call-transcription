@@ -120,18 +120,9 @@ def pick_device(requested):
 # ---------------------------------------------------------------- stereo
 
 def transcribe(model, audio, speaker, language):
-    segments, _ = model.transcribe(
-        audio,
-        language=language,
-        vad_filter=True,  # skip silence while the other party talks
-        beam_size=5,
-        condition_on_previous_text=False,  # reduces repeated/hallucinated lines
-    )
-    return [
-        {"speaker": speaker, "start": s.start, "end": s.end, "text": s.text.strip()}
-        for s in segments
-        if s.text.strip()
-    ]
+    """Word-level, so each channel's words interleave with the other channel's by real time
+    (a batched segment can span ~30 s of one channel and swallow the other party's turns)."""
+    return [{"speaker": speaker, "word": True, **w} for w in transcribe_words(model, audio, language)]
 
 
 # ---------------------------------------------------------------- mono
@@ -143,7 +134,8 @@ def transcribe_words(model, audio, language):
         vad_filter=True,
         beam_size=5,
         word_timestamps=True,
-        condition_on_previous_text=False,
+        without_timestamps=False,  # batched pipeline defaults to True
+        condition_on_previous_text=False,  # reduces repeated/hallucinated lines
     )
     return [
         {"start": w.start, "end": w.end, "text": w.word}
