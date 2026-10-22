@@ -1,10 +1,13 @@
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+from redis import Redis
+from celery import Task
 
 from app.celery_app import celery_app
 from transcribe_call import load_model, transcribe_call, turns_to_records
@@ -25,6 +28,35 @@ WHISPER_BATCH_SIZE = int(os.getenv("WHISPER_BATCH_SIZE", "0"))     # 0 = sequent
 CALLBACK_TIMEOUT = int(os.getenv("CALLBACK_TIMEOUT", "30"))
 
 _model = None  # loaded once per worker process, reused across tasks
+
+
+class ShutdownWhenQueueEmptyTask(Task):
+    def after_return(self, status, retval, task_id, args, kwargs, einfo):
+        super().after_return(status, retval, task_id, args, kwargs, einfo)
+        if status == "RETRY":
+            return
+
+        hostname = self.request.hostname
+        if not hostname:
+            log.warning("Cannot check queue: worker hostname is unavailable")
+            return
+
+        time.sleep(10)
+
+        try:
+            with Redis.from_url(self.app.conf.broker_url) as broker:
+                queues = self.app.amqp.queues.keys()
+                pending = sum(broker.llen(queue_name) for queue_name in queues)
+        except Exception:
+            log.exception("Could not check Celery queue; leaving worker running")
+            return
+
+        if pending:
+            log.info("Worker remains running; %s Celery task(s) are queued", pending)
+            return
+
+        log.info("Celery queues are empty; shutting down worker %s", hostname)
+        self.app.control.broadcast("shutdown", destination=[hostname])
 
 
 def get_model():
@@ -73,7 +105,8 @@ def send_callback(callback_url, token, payload):
     return True
 
 
-@celery_app.task(bind=True, autoretry_for=(requests.RequestException,),
+@celery_app.task(bind=True, base=ShutdownWhenQueueEmptyTask,
+                 autoretry_for=(requests.RequestException,),
                  retry_backoff=True, retry_backoff_max=600, max_retries=5)
 def deliver_callback(self, callback_url, token, payload):
     """Separate task so a failing callback is retried without re-transcribing."""
@@ -83,7 +116,8 @@ def deliver_callback(self, callback_url, token, payload):
 
 # ---------------------------------------------------------------- transcription
 
-@celery_app.task(bind=True, max_retries=2, default_retry_delay=60)
+@celery_app.task(bind=True, base=ShutdownWhenQueueEmptyTask,
+                 max_retries=2, default_retry_delay=60)
 def transcribe_and_notify(self, audio_url, callback_url, token, call_id, options=None):
     options = options or {}
     try:
