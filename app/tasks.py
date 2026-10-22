@@ -30,10 +30,26 @@ CALLBACK_TIMEOUT = int(os.getenv("CALLBACK_TIMEOUT", "30"))
 _model = None  # loaded once per worker process, reused across tasks
 
 
+def get_queued_task_count(app):
+    with Redis.from_url(app.conf.broker_url) as broker:
+        queues = app.amqp.queues.keys()
+        return sum(broker.llen(queue_name) for queue_name in queues)
+
+
 class ShutdownWhenQueueEmptyTask(Task):
     def after_return(self, status, retval, task_id, args, kwargs, einfo):
         super().after_return(status, retval, task_id, args, kwargs, einfo)
         if status == "RETRY":
+            return
+
+        try:
+            pending = get_queued_task_count(self.app)
+        except Exception:
+            log.exception("Could not check Celery queue; skipping shutdown check")
+            return
+
+        if pending >= 10:
+            log.info("Skipping shutdown check; %s Celery task(s) are queued", pending)
             return
 
         shutdown_when_queue_empty.delay()
@@ -49,9 +65,7 @@ def shutdown_when_queue_empty(self):
         return
 
     try:
-        with Redis.from_url(self.app.conf.broker_url) as broker:
-            queues = self.app.amqp.queues.keys()
-            pending = sum(broker.llen(queue_name) for queue_name in queues)
+        pending = get_queued_task_count(self.app)
     except Exception:
         log.exception("Could not check Celery queue; leaving worker running")
         return
