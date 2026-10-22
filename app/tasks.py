@@ -36,27 +36,32 @@ class ShutdownWhenQueueEmptyTask(Task):
         if status == "RETRY":
             return
 
-        hostname = self.request.hostname
-        if not hostname:
-            log.warning("Cannot check queue: worker hostname is unavailable")
-            return
+        shutdown_when_queue_empty.delay()
 
-        time.sleep(10)
 
-        try:
-            with Redis.from_url(self.app.conf.broker_url) as broker:
-                queues = self.app.amqp.queues.keys()
-                pending = sum(broker.llen(queue_name) for queue_name in queues)
-        except Exception:
-            log.exception("Could not check Celery queue; leaving worker running")
-            return
+@celery_app.task(bind=True, name="app.tasks.shutdown_when_queue_empty")
+def shutdown_when_queue_empty(self):
+    time.sleep(10)
 
-        if pending:
-            log.info("Worker remains running; %s Celery task(s) are queued", pending)
-            return
+    hostname = self.request.hostname
+    if not hostname:
+        log.warning("Cannot check queue: worker hostname is unavailable")
+        return
 
-        log.info("Celery queues are empty; shutting down worker %s", hostname)
-        self.app.control.broadcast("shutdown", destination=[hostname])
+    try:
+        with Redis.from_url(self.app.conf.broker_url) as broker:
+            queues = self.app.amqp.queues.keys()
+            pending = sum(broker.llen(queue_name) for queue_name in queues)
+    except Exception:
+        log.exception("Could not check Celery queue; leaving worker running")
+        return
+
+    if pending:
+        log.info("Worker remains running; %s Celery task(s) are queued", pending)
+        return
+
+    log.info("Celery queues are empty; shutting down worker %s", hostname)
+    self.app.control.broadcast("shutdown", destination=[hostname])
 
 
 def get_model():
