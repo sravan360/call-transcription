@@ -21,6 +21,9 @@ class TranscribeRequest(BaseModel):
     api: HttpUrl = Field(..., description="Callback URL that receives the transcript")
     token: str = Field(..., description="Bearer token sent to the callback URL")
     call_id: str
+    agent_channel: Optional[Literal["left", "right"]] = Field(
+        None, description="Stereo channel carrying the agent; overrides options.agent_channel"
+    )
     options: Optional[TranscribeOptions] = None
 
 
@@ -32,6 +35,10 @@ class TranscribeResponse(BaseModel):
 
 @app.post("/transcribe", response_model=TranscribeResponse, status_code=202)
 def transcribe(req: TranscribeRequest):
+    options = req.options or TranscribeOptions()
+    if req.agent_channel:
+        options.agent_channel = req.agent_channel
+
     # Enqueue by name so the API process never imports Whisper / torch
     task = celery_app.send_task(
         "app.tasks.transcribe_and_notify",
@@ -40,7 +47,7 @@ def transcribe(req: TranscribeRequest):
             str(req.api),
             req.token,
             req.call_id,
-            req.options.model_dump() if req.options else None,
+            options.model_dump(),
         ],
     )
     return TranscribeResponse(task_id=task.id, call_id=req.call_id, status="queued")
