@@ -26,6 +26,9 @@ WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cuda")
 WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE") or None  # unset: float16 on GPU, int8 on CPU
 WHISPER_BATCH_SIZE = int(os.getenv("WHISPER_BATCH_SIZE", "0"))     # 0 = sequential (no batching)
 CALLBACK_TIMEOUT = int(os.getenv("CALLBACK_TIMEOUT", "30"))
+SHUTDOWN_URL = os.getenv(
+    "SHUTDOWN_URL", "https://up548gw5y6.execute-api.us-east-2.amazonaws.com/default/BQA_CWA_Stop"
+)
 
 _model = None  # loaded once per worker process, reused across tasks
 
@@ -74,7 +77,14 @@ def shutdown_when_queue_empty(self):
         log.info("Worker remains running; %s Celery task(s) are queued", pending)
         return
 
-    log.info("Celery queues are empty; shutting down worker %s", hostname)
+    log.info("Celery queues are empty; stopping server via %s", SHUTDOWN_URL)
+    try:
+        r = requests.post(SHUTDOWN_URL, timeout=CALLBACK_TIMEOUT)
+        r.raise_for_status()
+    except requests.RequestException:
+        log.exception("Server stop API call failed")
+
+    log.info("Shutting down worker %s", hostname)
     self.app.control.broadcast("shutdown", destination=[hostname])
 
 
