@@ -1,6 +1,7 @@
 import os
 
 from celery import Celery
+from redis import Redis
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
@@ -16,3 +17,10 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,     # transcription is long-running; take one job at a time
     result_expires=24 * 3600,
 )
+
+
+def get_queued_task_count(app=celery_app):
+    """Tasks waiting in the Redis broker queues (not yet picked up by a worker)."""
+    with Redis.from_url(app.conf.broker_url) as broker:
+        queues = app.amqp.queues.keys()
+        return sum(broker.llen(queue_name) for queue_name in queues)

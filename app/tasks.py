@@ -6,10 +6,9 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
-from redis import Redis
 from celery import Task
 
-from app.celery_app import celery_app
+from app.celery_app import celery_app, get_queued_task_count
 from transcribe_call import load_model, transcribe_call, turns_to_records
 
 log = logging.getLogger(__name__)
@@ -31,12 +30,6 @@ SHUTDOWN_URL = os.getenv(
 )
 
 _model = None  # loaded once per worker process, reused across tasks
-
-
-def get_queued_task_count(app):
-    with Redis.from_url(app.conf.broker_url) as broker:
-        queues = app.amqp.queues.keys()
-        return sum(broker.llen(queue_name) for queue_name in queues)
 
 
 class ShutdownWhenQueueEmptyTask(Task):
@@ -134,7 +127,7 @@ def send_callback(callback_url, token, payload):
     return True
 
 
-@celery_app.task(bind=True, base=ShutdownWhenQueueEmptyTask,
+@celery_app.task(bind=True,
                  autoretry_for=(requests.RequestException,),
                  retry_backoff=True, retry_backoff_max=600, max_retries=5)
 def deliver_callback(self, callback_url, token, payload):
@@ -145,7 +138,7 @@ def deliver_callback(self, callback_url, token, payload):
 
 # ---------------------------------------------------------------- transcription
 
-@celery_app.task(bind=True, base=ShutdownWhenQueueEmptyTask,
+@celery_app.task(bind=True, 
                  max_retries=2, default_retry_delay=60)
 def transcribe_and_notify(self, audio_url, callback_url, token, call_id, options=None):
     options = options or {}
