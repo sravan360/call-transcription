@@ -16,6 +16,13 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,     # transcription is long-running; take one job at a time
     result_expires=24 * 3600,
+    # Survive Redis/DNS blips instead of leaving the worker with a dead connection
+    broker_connection_retry_on_startup=True,
+    broker_connection_max_retries=None,   # retry forever
+    broker_transport_options={"socket_keepalive": True, "retry_on_timeout": True},
+    redis_backend_health_check_interval=30,
+    redis_retry_on_timeout=True,
+    redis_socket_keepalive=True,
 )
 
 

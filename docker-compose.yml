@@ -2,6 +2,11 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   api:
     build: .
@@ -12,7 +17,8 @@ services:
     environment:
       REDIS_URL: redis://redis:6379/0
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   worker:
@@ -33,8 +39,9 @@ services:
               count: 1
               capabilities: [gpu]
     depends_on:
-      - redis
-    restart: "no"
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   cron:
     image: alpine:3.20
